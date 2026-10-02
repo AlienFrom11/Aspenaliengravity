@@ -37,6 +37,25 @@
             width: 250px;
             cursor: pointer;
         }
+        #resetBtn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background-color: rgba(255, 69, 0, 0.85);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            transition: background-color 0.2s;
+            z-index: 10;
+        }
+        #resetBtn:hover {
+            background-color: rgba(255, 69, 0, 1);
+        }
     </style>
 </head>
 <body>
@@ -44,6 +63,7 @@
         <label for="gravitySlider">중력 가속도: <span id="gravityValue">9.8 m/s²</span></label>
         <input type="range" id="gravitySlider" min="400000" max="8000000" step="200000" value="2000000">
     </div>
+    <button id="resetBtn">Reset</button>
     <canvas id="simulationCanvas"></canvas>
 
     <script>
@@ -58,6 +78,7 @@
 
             const gravitySlider = document.getElementById('gravitySlider');
             const gravityValueLabel = document.getElementById('gravityValue');
+            const resetBtn = document.getElementById('resetBtn');
 
             gravitySlider.addEventListener('input', (e) => {
                 GRAVITY_CONSTANT = parseFloat(e.target.value);
@@ -109,6 +130,12 @@
             }
             window.addEventListener('resize', resize);
             resize(); // 캔버스 초기화
+
+            // 리셋 버튼 클릭 이벤트: 모든 공 지우기
+            resetBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                balls.length = 0; // 공 배열 초기화
+            });
 
             // 마우스 클릭 이벤트: 공(사과) 생성
             canvas.addEventListener('click', (e) => {
