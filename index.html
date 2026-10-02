@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2D 지구 중력 시뮬레이션</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000; /* 우주 배경 느낌 */
+        }
+        canvas {
+            display: block;
+        }
+        #ui-container {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.85);
+            padding: 15px 25px;
+            border-radius: 12px;
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        #ui-container label {
+            margin-bottom: 10px;
+            font-weight: bold;
+            color: #333;
+        }
+        #gravitySlider {
+            width: 250px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui-container">
+        <label for="gravitySlider">중력 가속도: <span id="gravityValue">9.8 m/s²</span></label>
+        <input type="range" id="gravitySlider" min="400000" max="8000000" step="200000" value="2000000">
+    </div>
+    <canvas id="simulationCanvas"></canvas>
+
+    <script>
+        (() => {
+            const canvas = document.getElementById('simulationCanvas');
+            const ctx = canvas.getContext('2d');
+
+            // 설정 및 상수
+            const EARTH_RADIUS = 100;
+            const BALL_RADIUS = 15;
+            let GRAVITY_CONSTANT = 2000000; // 가상의 중력 상수 (슬라이더로 변경 가능)
+
+            const gravitySlider = document.getElementById('gravitySlider');
+            const gravityValueLabel = document.getElementById('gravityValue');
+
+            gravitySlider.addEventListener('input', (e) => {
+                GRAVITY_CONSTANT = parseFloat(e.target.value);
+                const displayValue = (GRAVITY_CONSTANT / 2000000 * 9.8).toFixed(1);
+                gravityValueLabel.textContent = `${displayValue} m/s²`;
+            });
+
+            // 자산(이미지) 로드
+            const assets = {
+                earth: { img: new Image(), loaded: false, src: './earth_asia.png' },
+                apple1: { img: new Image(), loaded: false, src: './fruit_ringo.png' },
+                apple2: { img: new Image(), loaded: false, src: './fruit_ao_ringo.png' }
+            };
+
+            Object.values(assets).forEach(asset => {
+                asset.img.onload = () => { asset.loaded = true; };
+                asset.img.onerror = () => { asset.loaded = false; };
+                asset.img.src = asset.src;
+            });
+
+            // 상태
+            const earth = {
+                x: window.innerWidth / 2,
+                y: window.innerHeight / 2
+            };
+
+            const balls = [];
+            let nextAppleType = 1;
+
+            // 캔버스 크기를 창 크기에 맞춤
+            function resize() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                
+                const oldX = earth.x;
+                const oldY = earth.y;
+                
+                earth.x = canvas.width / 2;
+                earth.y = canvas.height / 2;
+
+                const dx = earth.x - oldX;
+                const dy = earth.y - oldY;
+
+                // 리사이징 시 모든 공들의 위치 보정 (물리 시스템 도입에 맞춰 모든 공을 보정)
+                balls.forEach(ball => {
+                    ball.x += dx;
+                    ball.y += dy;
+                });
+            }
+            window.addEventListener('resize', resize);
+            resize(); // 캔버스 초기화
+
+            // 마우스 클릭 이벤트: 공(사과) 생성
+            canvas.addEventListener('click', (e) => {
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+
+                // 지구 내부를 클릭했는지 확인하여, 내부면 공 생성 무시
+                const dx = mouseX - earth.x;
+                const dy = mouseY - earth.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist > EARTH_RADIUS + BALL_RADIUS) {
+                    balls.push({
+                        x: mouseX,
+                        y: mouseY,
+                        vx: 0,
+                        vy: 0,
+                        type: nextAppleType
+                    });
+                    nextAppleType = nextAppleType === 1 ? 2 : 1; // 번갈아가며 생성
+                }
+            });
+
+            // 애니메이션 루프
+            let lastTime = 0;
+            function update(time) {
+                if (!lastTime) lastTime = time;
+                let dt = (time - lastTime) / 1000; // 초 단위 델타 타임
+                lastTime = time;
+
+                // 탭 백그라운드 전환 등으로 인한 과도한 dt 누적(폭발) 방지
+                if (dt > 0.05) dt = 0.05;
+
+                const bounds = Math.max(canvas.width, canvas.height) * 2; // 화면을 크게 벗어난 기준
+
+                // 물리 업데이트 (역순 순회로 splice 대응)
+                for (let i = balls.length - 1; i >= 0; i--) {
+                    const ball = balls[i];
+
+                    // 화면 이탈 시 배열에서 제거 (가비지 컬렉션 유도)
+                    const dxEarth = ball.x - earth.x;
+                    const dyEarth = ball.y - earth.y;
+                    const distFromCenter = Math.sqrt(dxEarth * dxEarth + dyEarth * dyEarth);
+                    
+                    if (distFromCenter > bounds) {
+                        balls.splice(i, 1);
+                        continue;
+                    }
+
+                    // 중력 가속도 계산 (F = G * M / r^2)
+                    const force = GRAVITY_CONSTANT / (distFromCenter * distFromCenter);
+                    // 가속도 방향 (ball에서 earth로)
+                    const ax = force * (-dxEarth / distFromCenter);
+                    const ay = force * (-dyEarth / distFromCenter);
+
+                    ball.vx += ax * dt;
+                    ball.vy += ay * dt;
+
+                    // 감쇠 (공기 저항)
+                    ball.vx *= 0.99;
+                    ball.vy *= 0.99;
+
+                    ball.x += ball.vx * dt;
+                    ball.y += ball.vy * dt;
+                }
+
+                // 충돌 처리 (위치 보정 및 속도 반발) - 여러 번 반복하여 안정적인 쌓임(stacking) 구현
+                const collisionIterations = 4;
+                for (let iter = 0; iter < collisionIterations; iter++) {
+                    // 1. 지구와의 충돌
+                    balls.forEach(ball => {
+                        const dx = ball.x - earth.x;
+                        const dy = ball.y - earth.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        const minDist = EARTH_RADIUS + BALL_RADIUS;
+
+                        if (dist < minDist) {
+                            const nx = dx / dist;
+                            const ny = dy / dist;
+                            const penetration = minDist - dist;
+
+                            // 위치 보정
+                            ball.x += nx * penetration;
+                            ball.y += ny * penetration;
+
+                            // 속도 반발
+                            const dot = ball.vx * nx + ball.vy * ny;
+                            if (dot < 0) {
+                                const restitution = 0.2; // 지구와는 덜 튕김
+                                ball.vx -= (1 + restitution) * dot * nx;
+                                ball.vy -= (1 + restitution) * dot * ny;
+
+                                // 마찰
+                                const tx = -ny;
+                                const ty = nx;
+                                const tDot = ball.vx * tx + ball.vy * ty;
+                                ball.vx -= tDot * 0.2 * tx;
+                                ball.vy -= tDot * 0.2 * ty;
+                            }
+                        }
+                    });
+
+                    // 2. 사과들(공) 간의 충돌 (원형 충돌)
+                    for (let i = 0; i < balls.length; i++) {
+                        for (let j = i + 1; j < balls.length; j++) {
+                            const b1 = balls[i];
+                            const b2 = balls[j];
+
+                            const dx = b2.x - b1.x;
+                            const dy = b2.y - b1.y;
+                            const dist = Math.sqrt(dx * dx + dy * dy);
+                            const minDist = BALL_RADIUS * 2;
+
+                            if (dist < minDist && dist > 0.0001) { 
+                                const nx = dx / dist;
+                                const ny = dy / dist;
+                                const penetration = minDist - dist;
+
+                                // 위치 보정 (서로 밀어내기)
+                                const correction = penetration / 2;
+                                b1.x -= nx * correction;
+                                b1.y -= ny * correction;
+                                b2.x += nx * correction;
+                                b2.y += ny * correction;
+
+                                // 속도 반발 (탄성 충돌)
+                                const rvx = b2.vx - b1.vx;
+                                const rvy = b2.vy - b1.vy;
+                                const dot = rvx * nx + rvy * ny;
+
+                                if (dot < 0) {
+                                    const restitution = 0.5; // 사과끼리는 탄성 반발
+                                    const impulse = -(1 + restitution) * dot / 2;
+
+                                    const ix = nx * impulse;
+                                    const iy = ny * impulse;
+
+                                    b1.vx -= ix;
+                                    b1.vy -= iy;
+                                    b2.vx += ix;
+                                    b2.vy += iy;
+
+                                    // 마찰
+                                    const tx = -ny;
+                                    const ty = nx;
+                                    const tDot = rvx * tx + rvy * ty;
+                                    const frictionImpulse = -tDot * 0.1;
+                                    b1.vx -= tx * frictionImpulse;
+                                    b1.vy -= ty * frictionImpulse;
+                                    b2.vx += tx * frictionImpulse;
+                                    b2.vy += ty * frictionImpulse;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 렌더링
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                // 지구 그리기
+                if (assets.earth.loaded) {
+                    ctx.drawImage(
+                        assets.earth.img, 
+                        earth.x - EARTH_RADIUS, 
+                        earth.y - EARTH_RADIUS, 
+                        EARTH_RADIUS * 2, 
+                        EARTH_RADIUS * 2
+                    );
+                } else {
+                    ctx.beginPath();
+                    ctx.arc(earth.x, earth.y, EARTH_RADIUS, 0, Math.PI * 2);
+                    ctx.fillStyle = '#1e90ff';
+                    ctx.fill();
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = '#fff';
+                    ctx.stroke();
+                }
+
+                // 공 그리기
+                balls.forEach(ball => {
+                    const asset = ball.type === 1 ? assets.apple1 : assets.apple2;
+                    if (asset.loaded) {
+                        const angle = Math.atan2(earth.y - ball.y, earth.x - ball.x) - Math.PI / 2;
+                        ctx.save();
+                        ctx.translate(ball.x, ball.y);
+                        ctx.rotate(angle);
+                        ctx.drawImage(
+                            asset.img, 
+                            -BALL_RADIUS, 
+                            -BALL_RADIUS, 
+                            BALL_RADIUS * 2, 
+                            BALL_RADIUS * 2
+                        );
+                        ctx.restore();
+                    } else {
+                        ctx.beginPath();
+                        ctx.arc(ball.x, ball.y, BALL_RADIUS, 0, Math.PI * 2);
+                        // type에 따라 fallback 색상을 다르게 적용
+                        ctx.fillStyle = ball.type === 1 ? '#ff4500' : '#32cd32'; 
+                        ctx.fill();
+                        ctx.lineWidth = 1;
+                        ctx.strokeStyle = '#fff';
+                        ctx.stroke();
+                    }
+                });
+
+                requestAnimationFrame(update);
+            }
+
+            // 루프 시작
+            requestAnimationFrame(update);
+        })();
+    </script>
+</body>
+</html>
